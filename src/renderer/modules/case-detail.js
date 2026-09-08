@@ -397,9 +397,17 @@
       try {
         const fileBase64 = await fileToBase64(file);
         const mimeType = file.type || 'application/octet-stream';
+        // 2026-09-08: this call used to share the app-wide 20-second request
+        // budget with every small JSON call. The body here is the file
+        // itself, base64-encoded (up to ~13.3MB for the 10MB cap above), and
+        // on a slow connection that legitimately takes longer than 20s to
+        // upload -- which showed up as "The CRM did not respond within 20
+        // seconds" and read as the CRM being down. Give uploads their own,
+        // longer budget instead (see espoClient.js's FILE_TRANSFER_TIMEOUT_MS).
         const attachRes = await window.rvr.espo.request('Attachment', {
           method: 'POST',
-          body: { name: file.name, type: mimeType, role: 'Attachment', relatedType: 'Document', field: 'file', file: `data:${mimeType};base64,${fileBase64}` }
+          body: { name: file.name, type: mimeType, role: 'Attachment', relatedType: 'Document', field: 'file', file: `data:${mimeType};base64,${fileBase64}` },
+          timeoutMs: 120000
         });
         if (!attachRes.ok) { showStatus(attachRes.message || 'Could not upload the file.', 'err'); return; }
 

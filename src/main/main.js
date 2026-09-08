@@ -420,9 +420,9 @@ function staffFacingMessage(err, status) {
   return 'Something went wrong — a report has been sent to the team.';
 }
 
-ipcMain.handle('espo:request', async (_event, { path: reqPath, method, query, body, expected403 }) => {
+ipcMain.handle('espo:request', async (_event, { path: reqPath, method, query, body, expected403, timeoutMs }) => {
   try {
-    const data = await espo.request(reqPath, { method, query, body });
+    const data = await espo.request(reqPath, { method, query, body, timeoutMs });
     return { ok: true, data };
   } catch (err) {
     const status = err instanceof EspoAuthError ? err.status : undefined;

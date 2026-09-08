@@ -33,6 +33,13 @@
   // Newest first. Version strings must match package.json exactly.
   const ENTRIES = [
     {
+      version: '0.2.42',
+      headline: 'Uploading a document no longer gives up too soon',
+      items: [
+        'Uploading a document used to share the same 20-second limit as every other CRM request. A larger file on a slower connection could genuinely need longer than that, and it came back as "The CRM did not respond" even though nothing was wrong. Uploads now get a longer, separate wait before they give up.'
+      ]
+    },
+    {
       version: '0.2.41',
       headline: 'Every case now has a reference you can give a client',
       items: [
