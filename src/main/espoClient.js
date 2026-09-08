@@ -36,10 +36,18 @@ const BASE_URL = 'https://crm.rvrratingpartners.co.uk/api/v1';
 // real call here and short enough that a staff member gets a real answer.
 const REQUEST_TIMEOUT_MS = 20000;
 
-function requestTimeoutSignal() {
+// 2026-09-08: file transfers (a document upload's base64 body, or downloading
+// one back down) are not a small JSON request and can legitimately take
+// longer than REQUEST_TIMEOUT_MS on a slow connection — see the note on
+// request()'s `timeoutMs` param below. Used as downloadFile's fixed budget
+// and as the upload timeout case-detail.js asks for via request()'s
+// `timeoutMs` option.
+const FILE_TRANSFER_TIMEOUT_MS = 120000;
+
+function requestTimeoutSignal(timeoutMs) {
   try {
     if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
-      return AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+      return AbortSignal.timeout(timeoutMs);
     }
   } catch (_) { /* fall through - an older runtime simply gets no timeout */ }
   return undefined;
@@ -291,8 +299,16 @@ class EspoClient {
   /**
    * Generic authenticated request against the EspoCRM REST API, using the
    * currently logged-in user's own credentials (and therefore their own ACL).
+   *
+   * `timeoutMs` lets a caller override the default 20-second budget. Added
+   * 2026-09-08 after a POST Attachment (document upload) timed out on a slow
+   * connection: every call through here shared one 20-second limit, but an
+   * upload's body is the file itself, base64-encoded (up to ~13.3MB for the
+   * 10MB cap enforced in case-detail.js) rather than the small JSON payload
+   * every other screen sends, so it needs a real, separate budget instead of
+   * a size cap tuned to hope it fits under 20 seconds.
    */
-  async request(path, { method = 'GET', query, body } = {}) {
+  async request(path, { method = 'GET', query, body, timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
     if (!this._authHeader) {
       throw new EspoAuthError('Not logged in.', 401, true);
     }
@@ -332,7 +348,7 @@ class EspoClient {
           ...this._authExtraHeaders()
         },
         body: body ? JSON.stringify(body) : undefined,
-        signal: requestTimeoutSignal()
+        signal: requestTimeoutSignal(timeoutMs)
       });
     } catch (err) {
       // 2026-08-28: no request in this app had a time limit. If the CRM was
@@ -345,7 +361,7 @@ class EspoClient {
       const timedOut = err && (err.name === 'TimeoutError' || err.name === 'AbortError');
       throw new EspoAuthError(
         timedOut
-          ? `The CRM did not respond within ${Math.round(REQUEST_TIMEOUT_MS / 1000)} seconds.`
+          ? `The CRM did not respond within ${Math.round(timeoutMs / 1000)} seconds.`
           : 'Could not reach the CRM.',
         0,
         false
@@ -419,7 +435,7 @@ class EspoClient {
       res = await fetch(`${BASE_URL}/Attachment/file/${encodeURIComponent(fileId)}`, {
         method: 'GET',
         headers: { Authorization: this._authHeader, ...this._authExtraHeaders() },
-        signal: requestTimeoutSignal()
+        signal: requestTimeoutSignal(FILE_TRANSFER_TIMEOUT_MS)
       });
     } catch (err) {
       const timedOut = err && (err.name === 'TimeoutError' || err.name === 'AbortError');
