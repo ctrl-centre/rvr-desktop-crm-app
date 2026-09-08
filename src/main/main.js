@@ -407,6 +407,16 @@ function staffFacingMessage(err, status) {
   // ones already aimed at whoever is using the app, so let them through.
   if (err instanceof EspoAuthError && err.expected) return err.message;
 
+  // 2026-09-08: a file transfer that ran out of time is not the CRM being
+  // down, and must not be described as though it were. Maria was told "the
+  // CRM did not respond" for an upload that was simply still going, on a day
+  // the CRM was answering everything else within seconds. Say what actually
+  // happened and what to do about it. It is still reported to tech@, because
+  // uploads timing out repeatedly IS worth seeing.
+  if (status === 0 && err && err.timedOut && err.transfer) {
+    return `${err.message} That is usually a slow connection or a large file rather than a fault with the CRM. Try again, and if it keeps happening send a smaller or lower-quality scan.`;
+  }
+
   // 2026-08-28: status 0 means the request never got an answer at all - a
   // timeout or an unreachable host. It is still reported to tech@ like any
   // other unexplained failure, but the staff member gets a plain sentence

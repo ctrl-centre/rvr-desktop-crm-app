@@ -36,13 +36,65 @@ const BASE_URL = 'https://crm.rvrratingpartners.co.uk/api/v1';
 // real call here and short enough that a staff member gets a real answer.
 const REQUEST_TIMEOUT_MS = 20000;
 
-function requestTimeoutSignal() {
+// 2026-09-08: the limit above is right for an ordinary API call and wrong for
+// a file transfer. Maria's document upload died on it at 12:40 (app error
+// report, v0.2.41, "API call: POST Attachment") and told her "The CRM did not
+// respond within 20 seconds" - which reads as the CRM being down. It was not:
+// n8n was calling the same CRM successfully every two minutes either side of
+// her attempt (executions 5831-5839, all under seven seconds). A 10MB scan -
+// the app's own cap in case-detail.js - is about 13.5MB once base64'd into
+// JSON, and on a slow uplink that is minutes rather than seconds.
+//
+// So a file transfer gets its own, much longer limit and its own honest
+// wording. This does NOT relax the 20 seconds for anything else: the wedged-
+// CRM problem the original limit was added for is unchanged for every screen.
+const TRANSFER_TIMEOUT_MS = 120000;
+
+// Anything whose JSON body is bigger than this is a file, not a form. The
+// base64 payload of an upload is the only thing in this app that comes near
+// it - the largest ordinary request here is a few kilobytes.
+const LARGE_BODY_BYTES = 256 * 1024;
+
+function requestTimeoutSignal(ms = REQUEST_TIMEOUT_MS) {
   try {
     if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
-      return AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+      return AbortSignal.timeout(ms);
     }
   } catch (_) { /* fall through - an older runtime simply gets no timeout */ }
   return undefined;
+}
+
+/**
+ * True for the calls that move a file rather than a record. Both the path and
+ * the body size are checked: the path catches an Attachment call whatever its
+ * size, and the size catches anything else that ever carries base64 (a future
+ * screen, a different entity) without needing this list updated.
+ */
+function isFileTransfer(path, payload) {
+  const clean = String(path || '').replace(/^\//, '');
+  if (/^Attachment(\/|\?|$)/i.test(clean)) return true;
+  return typeof payload === 'string' && payload.length > LARGE_BODY_BYTES;
+}
+
+/**
+ * A timeout on a file transfer must never be reported as the CRM failing to
+ * answer - that is what sent 8 September down the wrong path for a while.
+ * Both call sites build their error here so the wording, the flags main.js
+ * branches on, and the sentence that reaches tech@ all stay in one place.
+ */
+function reachFailureError(timedOut, isTransfer, timeoutMs) {
+  let message;
+  if (!timedOut) {
+    message = 'Could not reach the CRM.';
+  } else if (isTransfer) {
+    message = `The file transfer did not finish within ${Math.round(timeoutMs / 1000)} seconds.`;
+  } else {
+    message = `The CRM did not respond within ${Math.round(timeoutMs / 1000)} seconds.`;
+  }
+  const err = new EspoAuthError(message, 0, false);
+  err.timedOut = !!timedOut;
+  err.transfer = !!isTransfer;
+  return err;
 }
 
 class EspoAuthError extends Error {
@@ -322,6 +374,12 @@ class EspoClient {
       url += `?${params.toString()}`;
     }
 
+    // Serialised once, so the size test below and the request itself cannot
+    // disagree about what is being sent.
+    const payload = body ? JSON.stringify(body) : undefined;
+    const transfer = isFileTransfer(path, payload);
+    const timeoutMs = transfer ? TRANSFER_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
+
     let res;
     try {
       res = await fetch(url, {
@@ -331,8 +389,8 @@ class EspoClient {
           'Content-Type': 'application/json',
           ...this._authExtraHeaders()
         },
-        body: body ? JSON.stringify(body) : undefined,
-        signal: requestTimeoutSignal()
+        body: payload,
+        signal: requestTimeoutSignal(timeoutMs)
       });
     } catch (err) {
       // 2026-08-28: no request in this app had a time limit. If the CRM was
@@ -343,13 +401,7 @@ class EspoClient {
       // still reporting it, because a server that stops answering is a
       // fault worth seeing.
       const timedOut = err && (err.name === 'TimeoutError' || err.name === 'AbortError');
-      throw new EspoAuthError(
-        timedOut
-          ? `The CRM did not respond within ${Math.round(REQUEST_TIMEOUT_MS / 1000)} seconds.`
-          : 'Could not reach the CRM.',
-        0,
-        false
-      );
+      throw reachFailureError(timedOut, transfer, timeoutMs);
     }
 
     if (res.status === 401) {
@@ -419,15 +471,12 @@ class EspoClient {
       res = await fetch(`${BASE_URL}/Attachment/file/${encodeURIComponent(fileId)}`, {
         method: 'GET',
         headers: { Authorization: this._authHeader, ...this._authExtraHeaders() },
-        signal: requestTimeoutSignal()
+        signal: requestTimeoutSignal(TRANSFER_TIMEOUT_MS)
       });
     } catch (err) {
+      // A download is a file transfer too - same longer limit, same wording.
       const timedOut = err && (err.name === 'TimeoutError' || err.name === 'AbortError');
-      throw new EspoAuthError(
-        timedOut ? 'The CRM did not respond in time while fetching that file.' : 'Could not reach the CRM.',
-        0,
-        false
-      );
+      throw reachFailureError(timedOut, true, TRANSFER_TIMEOUT_MS);
     }
 
     if (res.status === 401) {

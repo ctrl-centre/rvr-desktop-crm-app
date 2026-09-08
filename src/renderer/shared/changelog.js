@@ -33,6 +33,15 @@
   // Newest first. Version strings must match package.json exactly.
   const ENTRIES = [
     {
+      version: '0.2.42',
+      headline: 'Uploading a large document no longer looks like the CRM is down',
+      items: [
+        'An upload now has two minutes to finish instead of twenty seconds. A big scan on a slow connection was being cut off part-way through, even though nothing was wrong.',
+        'If an upload or a download does run out of time, the app now says the transfer was slow and suggests a smaller or lower-quality scan - it used to tell you the CRM had not responded, which was usually not true.',
+        'Everything else still gives up after twenty seconds, so a CRM that has genuinely stopped answering will still tell you quickly rather than leaving you on "Loading...".'
+      ]
+    },
+    {
       version: '0.2.41',
       headline: 'Every case now has a reference you can give a client',
       items: [
